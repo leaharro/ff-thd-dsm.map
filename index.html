@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VITL Stores Map</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Maps JavaScript API -->
+    <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBHcVkUgYLoJnNKpTecRUpAyMHU-T8HqFY&loading=async&callback=initMap"></script>
+    <style>
+        body { margin: 0; font-family: system-ui, -apple-system, sans-serif; }
+        #map { height: 100%; width: 100%; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
+
+        // Configuration - Enhanced with additional columns
+        const CONFIG = {
+            // Your Google Sheet ID
+            SHEET_ID: '1SzcwBIooLjgc8lVcXFyPM7UHc5eaav1y297VeRSOhlg',
+            
+            // Your Google Sheet tab name
+            SHEET_NAME: 'Freedom THD Stores',
+            
+            // Your Google API Key
+            API_KEY: 'AIzaSyBHcVkUgYLoJnNKpTecRUpAyMHU-T8HqFY',
+            
+            // Google Maps API Key
+            MAPS_API_KEY: 'AIzaSyBHcVkUgYLoJnNKpTecRUpAyMHU-T8HqFY',
+            
+            // Auto-refresh interval in minutes
+            REFRESH_MINUTES: 3,
+            
+            // VITL Filter
+            OWNER_FILTER: 'VITL',
+            
+            // Reserve Store URL
+            RESERVE_URL: 'https://docs.google.com/forms/d/e/1FAIpQLSdgGe9EyaLg8RcbaRdKFTyP3PJnaoR8UrmxKMi0c_MGQ6o8FQ/viewform',
+
+            // Column mappings based on your actual sheet layout
+            COLUMNS: {
+                STATUS: 0,           // Column A - Status
+                OWNER: 1,            // Column B - Owner
+                RESERVED_DATE: 2,    // Column C - Reserved Date
+                ETA_LAUNCH: 3,       // Column D - ETA Launch
+                OFFICIAL_LAUNCH: 4,  // Column E - Official Launch Date
+                DIVISION: 5,         // Column F - Division Name  
+                REGION: 6,           // Column G - Region Name
+                DISTRICT: 7,         // Column H - District #
+                RETAILER: 8,         // Column I - Retailer
+                RESERVATION_LINK: 9, // Column J - Reservation Link
+                STORE_NO: 10,        // Column K - Store No.
+                STORE_NAME: 11,      // Column L - Store Name
+                STREET: 12,          // Column M - Street
+                CITY: 13,            // Column N - City
+                STATE: 14,           // Column O - State
+                FULL_ADDRESS: 15,    // Column P - Full Address
+                LATITUDE: 16,        // Column Q - Latitude
+                LONGITUDE: 17,       // Column R - Longitude
+                ZIP: 18,             // Column S - Zip
+                COUNTY: 19,          // Column T - County
+                SALES_TARGET: 20,    // Column U - Gross Sales Target Per Month
+                UTILITY: 21,         // Column V - Utility
+                ELECTRICITY: 22      // Column W - Average Electricity rates
+            }
+        };
+
+        // Global variables for Google Maps
+        let map = null;
+        let markers = [];
+
+        // Icons
+        const Filter = ({ className }) => (
+            <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+            </svg>
+        );
+
+        const Search = ({ className }) => (
+            <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+        );
+
+        const Loader = ({ className }) => (
+            <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+        );
+
+        const RefreshCw = ({ className }) => (
+            <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M1 4v6h6M23 20v-6h-6" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 773.51 15" />
+            </svg>
+        );
+
+        const AlertCircle = ({ className }) => (
+            <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+        );
+
+        // Initialize Google Map callback
+        window.initMap = function() {
+            console.log('✅ Google Maps API loaded successfully for VITL Dashboard');
+        };
+
+        const VITLStoresMap = () => {
+            const [stores, setStores] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [error, setError] = useState('');
+            const [lastUpdated, setLastUpdated] = useState(null);
+            const [searchTerm, setSearchTerm] = useState('');
+            const [statusFilter, setStatusFilter] = useState('all');
+            const [stateFilter, setStateFilter] = useState('all');
+            const [divisionFilter, setDivisionFilter] = useState('all');
+            const [regionFilter, setRegionFilter] = useState('all');
+            const [selectedStore, setSelectedStore] = useState(null);
+            const [updateAnimation, setUpdateAnimation] = useState(false);
+            const mapRef = useRef(null);
+            const [mapLoaded, setMapLoaded] = useState(false);
+
+            // Enhanced status configuration
+            const getStatusColor = (status) => {
+                switch (status.toLowerCase()) {
+                    case 'open': return '#2C5134';      // VITL green
+                    case 'reserved': return '#CDEA80';  // Light green
+                    case 'staffed': return '#DB864E';   // Orange
+                    default: return '#6B7280';          // Gray
+                }
+            };
+
+            const getStatusBgColor = (status) => {
+                switch (status.toLowerCase()) {
+                    case 'open': return '#E8F5E8';      
+                    case 'reserved': return '#F4F9E8';  
+                    case 'staffed': return '#FDF2E9';   
+                    default: return '#F3F4F6';          
+                }
+            };
+
+            const getStatusTextColor = (status) => {
+                switch (status.toLowerCase()) {
+                    case 'open': return '#2C5134';      
+                    case 'reserved': return '#7A8B3A';  
+                    case 'staffed': return '#DB864E';   
+                    default: return '#374151';          
+                }
+            };
+
+            const formatCurrency = (value) => {
+                if (!value || value === '') return 'N/A';
+                const num = parseFloat(value.toString().replace(/[^0-9.-]+/g, ''));
+                if (isNaN(num)) return value;
+                return new Intl.NumberFormat('en-US', {
+                    style: 'currency',
+                    currency: 'USD',
+                    minimumFractionDigits: 0,
+                    maximumFractionDigits: 0
+                }).format(num);
+            };
+
+            const formatElectricityRate = (value) => {
+                if (!value || value === '') return 'N/A';
+                const num = parseFloat(value.toString().replace(/[^0-9.-]+/g, ''));
+                if (isNaN(num)) return value;
+                return `$${num.toFixed(3)}/kWh`;
+            };
+
+            const initializeMap = () => {
+                if (!window.google?.maps?.Map || !mapRef.current) {
+                    return false;
+                }
+
+                try {
+                    map = new window.google.maps.Map(mapRef.current, {
+                        zoom: 4,
+                        center: { lat: 39.8283, lng: -98.5795 },
+                        mapTypeId: 'roadmap',
+                        restriction: {
+                            latLngBounds: {
+                                north: 49.0,
+                                south: 25.0,
+                                west: -125.0,
+                                east: -66.0,
+                            },
+                            strictBounds: false,
+                        },
+                        styles: [
+                            {
+                                featureType: 'poi',
+                                elementType: 'labels',
+                                stylers: [{ visibility: 'off' }]
+                            },
+                            {
+                                featureType: 'road',
+                                elementType: 'labels',
+                                stylers: [{ visibility: 'off' }]
+                            },
+                            {
+                                featureType: 'road.local',
+                                elementType: 'geometry',
+                                stylers: [{ visibility: 'off' }]
+                            },
+                            {
+                                featureType: 'road.arterial',
+                                elementType: 'geometry',
+                                stylers: [{ lightness: 20 }]
+                            },
+                            {
+                                featureType: 'water',
+                                elementType: 'labels',
+                                stylers: [{ visibility: 'off' }]
+                            },
+                            {
+                                featureType: 'administrative.locality',
+                                elementType: 'labels',
+                                stylers: [{ visibility: 'off' }]
+                            },
+                            {
+                                featureType: 'landscape',
+                                elementType: 'labels',
+                                stylers: [{ visibility: 'off' }]
+                            },
+                            {
+                                featureType: 'administrative.province',
+                                elementType: 'geometry.stroke',
+                                stylers: [{ color: '#999999', weight: 1 }]
+                            },
+                            {
+                                featureType: 'transit',
+                                elementType: 'all',
+                                stylers: [{ visibility: 'off' }]
+                            }
+                        ],
+                        streetViewControl: false,
+                        fullscreenControl: false,
+                        mapTypeControl: false
+                    });
+
+                    setMapLoaded(true);
+                    return true;
+                } catch (error) {
+                    console.error('❌ Error initializing map:', error);
+                    return false;
+                }
+            };
+
+            const addMarkersToMap = (storeData) => {
+                if (!map || !window.google) return;
+
+                // Clear existing markers
+                markers.forEach(marker => marker.setMap(null));
+                markers = [];
+
+                // Add new markers
+                storeData.forEach((store, index) => {
+                    const marker = new window.google.maps.Marker({
+                        position: { lat: store.latitude, lng: store.longitude },
+                        map: map,
+                        title: `${store.storeName} (${store.storeNumber})`,
+                        icon: {
+                            path: window.google.maps.SymbolPath.CIRCLE,
+                            fillColor: getStatusColor(store.status),
+                            fillOpacity: 1,
+                            strokeColor: '#ffffff',
+                            strokeWeight: 1,
+                            scale: 8
+                        }
+                    });
+
+                    const statusDisplay = store.status.charAt(0).toUpperCase() + store.status.slice(1).toLowerCase();
+                    
+                    let buttonHtml = '';
+                    if (store.status.toLowerCase() === 'open') {
+                        buttonHtml = `<div style="margin-top: 12px; text-align: center;"><a href="${CONFIG.RESERVE_URL}" target="_blank" style="background: #2C5134; color: white; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-size: 14px; font-weight: 600; display: inline-block; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">Reserve</a></div>`;
+                    }
+
+                    const infoWindow = new window.google.maps.InfoWindow({
+                        content: `
+                            <div style="padding: 12px; min-width: 280px; font-family: system-ui, sans-serif;">
+                                <h3 style="margin: 0 0 4px 0; font-size: 16px; font-weight: bold; color: #1f2937;">${store.storeName}</h3>
+                                <h4 style="margin: 0 0 8px 0; font-size: 13px; font-weight: normal; color: #666;">Store #${store.storeNumber} • ${store.retailer}</h4>
+                                
+                                <div style="margin-bottom: 8px;">
+                                    <p style="margin: 0; font-size: 14px; color: #374151;"><strong>Address:</strong> ${store.address}</p>
+                                    <p style="margin: 0; font-size: 14px; color: #374151;">${store.city}, ${store.state} ${store.zip}</p>
+                                    ${store.county ? `<p style="margin: 0; font-size: 14px; color: #374151;"><strong>County:</strong> ${store.county}</p>` : ''}
+                                </div>
+                                
+                                <div style="margin-bottom: 8px;">
+                                    ${store.division ? `<p style="margin: 0; font-size: 13px; color: #666;"><strong>Division:</strong> ${store.division}</p>` : ''}
+                                    ${store.region ? `<p style="margin: 0; font-size: 13px; color: #666;"><strong>Region:</strong> ${store.region}</p>` : ''}
+                                    ${store.district ? `<p style="margin: 0; font-size: 13px; color: #666;"><strong>District:</strong> ${store.district}</p>` : ''}
+                                </div>
+                                
+                                <div style="margin-top: 12px;">
+                                    <span style="background: ${getStatusBgColor(store.status)}; color: ${getStatusTextColor(store.status)}; padding: 6px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; display: inline-block;">${statusDisplay}</span>
+                                </div>
+                                
+                                ${buttonHtml}
+                            </div>
+                        `
+                    });
+
+                    marker.addListener('click', () => {
+                        // Close any open info windows
+                        markers.forEach(m => m.infoWindow && m.infoWindow.close());
+                        
+                        // Open this info window
+                        infoWindow.open(map, marker);
+                        marker.infoWindow = infoWindow;
+                        
+                        // Update side panel
+                        setSelectedStore(store);
+                    });
+
+                    markers.push(marker);
+                });
+
+                // Fit map to show all stores
+                if (markers.length > 0) {
+                    const bounds = new window.google.maps.LatLngBounds();
+                    markers.forEach(marker => bounds.extend(marker.getPosition()));
+                    
+                    map.fitBounds(bounds);
+                    
+                    const listener = window.google.maps.event.addListener(map, 'idle', function() {
+                        const currentZoom = map.getZoom();
+                        if (currentZoom > 8) map.setZoom(8);
+                        if (currentZoom < 3) map.setZoom(3);
+                        window.google.maps.event.removeListener(listener);
+                    });
+                } else {
+                    map.setCenter({ lat: 39.8283, lng: -98.5795 });
+                    map.setZoom(4);
+                }
+            };
+
+            const fetchFromGoogleSheets = async () => {
+                try {
+                    setLoading(true);
+                    setError('');
+                    setUpdateAnimation(true);
+
+                    const encodedSheetName = encodeURIComponent(CONFIG.SHEET_NAME);
+                    const url = `https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.SHEET_ID}/values/${encodedSheetName}?key=${CONFIG.API_KEY}`;
+                    
+                    const response = await fetch(url);
+                    
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(`Google Sheets API error: ${response.status} - ${errorData.error?.message || response.statusText}`);
+                    }
+                    
+                    const data = await response.json();
+                    
+                    if (!data.values || data.values.length === 0) {
+                        throw new Error('No data found in the specified sheet');
+                    }
+
+                    const parsedStores = parseGoogleSheetsData(data.values);
+                    setStores(parsedStores);
+                    setLastUpdated(new Date());
+
+                    if (mapLoaded) {
+                        addMarkersToMap(parsedStores);
+                    }
+
+                    setTimeout(() => setUpdateAnimation(false), 2000);
+                    
+                } catch (err) {
+                    setError(err.message);
+                    setUpdateAnimation(false);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const parseGoogleSheetsData = (values) => {
+                const stores = [];
+                
+                // Find the header row
+                let headerRowIndex = -1;
+                for (let i = 0; i < Math.min(3, values.length); i++) {
+                    if (values[i] && values[i][0] && values[i][0].toString().toLowerCase().includes('status')) {
+                        headerRowIndex = i;
+                        break;
+                    }
+                }
+                
+                if (headerRowIndex === -1) {
+                    return stores;
+                }
+                
+                // Process data rows
+                const dataStartIndex = headerRowIndex + 1;
+                
+                for (let i = dataStartIndex; i < values.length; i++) {
+                    const row = values[i];
+                    
+                    if (row.length >= 20) {
+                        const rawStatus = row[CONFIG.COLUMNS.STATUS]?.toString() || '';
+                        const status = rawStatus.trim().toLowerCase();
+                        const owner = row[CONFIG.COLUMNS.OWNER]?.toString().trim(); // Column B - Owner
+                        
+                        // FILTER: Include VITL stores (Reserved/Staffed) OR any Non-VITL stores with "Open" status
+                        if ((owner === CONFIG.OWNER_FILTER && ['reserved', 'staffed'].includes(status)) || 
+                            (owner !== CONFIG.OWNER_FILTER && status === 'open')) {
+                            const lat = parseFloat(row[CONFIG.COLUMNS.LATITUDE]);
+                            const lng = parseFloat(row[CONFIG.COLUMNS.LONGITUDE]);
+                            
+                            if (!isNaN(lat) && !isNaN(lng)) {
+                                const store = {
+                                    status: row[CONFIG.COLUMNS.STATUS]?.toString().trim() || '',
+                                    owner: owner,
+                                    reservedDate: row[CONFIG.COLUMNS.RESERVED_DATE]?.toString().trim() || '',
+                                    etaLaunch: row[CONFIG.COLUMNS.ETA_LAUNCH]?.toString().trim() || '',
+                                    officialLaunch: row[CONFIG.COLUMNS.OFFICIAL_LAUNCH]?.toString().trim() || '',
+                                    division: row[CONFIG.COLUMNS.DIVISION]?.toString().trim() || '',
+                                    region: row[CONFIG.COLUMNS.REGION]?.toString().trim() || '',
+                                    district: row[CONFIG.COLUMNS.DISTRICT]?.toString().trim() || '',
+                                    retailer: row[CONFIG.COLUMNS.RETAILER]?.toString().trim() || '',
+                                    reservationLink: row[CONFIG.COLUMNS.RESERVATION_LINK]?.toString().trim() || CONFIG.RESERVE_URL,
+                                    storeNumber: row[CONFIG.COLUMNS.STORE_NO]?.toString().trim() || '',
+                                    storeName: row[CONFIG.COLUMNS.STORE_NAME]?.toString().trim() || '',
+                                    address: row[CONFIG.COLUMNS.STREET]?.toString().trim() || '',
+                                    city: row[CONFIG.COLUMNS.CITY]?.toString().trim() || '',
+                                    state: row[CONFIG.COLUMNS.STATE]?.toString().trim() || '',
+                                    fullAddress: row[CONFIG.COLUMNS.FULL_ADDRESS]?.toString().trim() || '',
+                                    zip: row[CONFIG.COLUMNS.ZIP]?.toString().trim() || '',
+                                    county: row[CONFIG.COLUMNS.COUNTY]?.toString().trim() || '',
+                                    salesTarget: row[CONFIG.COLUMNS.SALES_TARGET]?.toString().trim() || '',
+                                    utility: row[CONFIG.COLUMNS.UTILITY]?.toString().trim() || '',
+                                    electricityRate: row[CONFIG.COLUMNS.ELECTRICITY]?.toString().trim() || '',
+                                    latitude: lat,
+                                    longitude: lng
+                                };
+                                stores.push(store);
+                            }
+                        }
+                    }
+                }
+                
+                return stores;
+            };
+
+            // Initialize map when Google Maps API loads
+            useEffect(() => {
+                let attempts = 0;
+                const maxAttempts = 50;
+
+                const checkGoogleMaps = () => {
+                    attempts++;
+                    
+                    if (window.google?.maps?.Map && mapRef.current) {
+                        const success = initializeMap();
+                        if (success) {
+                            return;
+                        }
+                    }
+                    
+                    if (attempts < maxAttempts) {
+                        setTimeout(checkGoogleMaps, 100);
+                    } else {
+                        setError('Failed to load Google Maps. Please refresh the page.');
+                    }
+                };
+                
+                checkGoogleMaps();
+            }, []);
+
+            // Update markers when stores or filters change
+            useEffect(() => {
+                if (mapLoaded && stores.length > 0) {
+                    addMarkersToMap(filteredStores);
+                }
+            }, [stores, filteredStores, mapLoaded, searchTerm, statusFilter, stateFilter, divisionFilter, regionFilter]);
+
+            // Initial load
+            useEffect(() => {
+                fetchFromGoogleSheets();
+            }, []);
+
+            // Auto-refresh setup
+            useEffect(() => {
+                if (CONFIG.REFRESH_MINUTES > 0) {
+                    const interval = setInterval(() => {
+                        fetchFromGoogleSheets();
+                    }, CONFIG.REFRESH_MINUTES * 60 * 1000);
+
+                    return () => clearInterval(interval);
+                }
+            }, []);
+
+            const filteredStores = useMemo(() => {
+                return stores.filter(store => {
+                    const matchesSearch = store.storeName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                                       store.city.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                                       store.retailer.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                                       store.state.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                                       store.storeNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                                       store.county.toLowerCase().includes(searchTerm.toLowerCase());
+                    const matchesStatus = statusFilter === 'all' || store.status.toLowerCase() === statusFilter;
+                    const matchesState = stateFilter === 'all' || store.state === stateFilter;
+                    const matchesDivision = divisionFilter === 'all' || store.division === divisionFilter;
+                    const matchesRegion = regionFilter === 'all' || store.region === regionFilter;
+                    
+                    return matchesSearch && matchesStatus && matchesState && matchesDivision && matchesRegion;
+                });
+            }, [stores, searchTerm, statusFilter, stateFilter, divisionFilter, regionFilter]);
+
+            const uniqueStates = [...new Set(stores.map(store => store.state))].filter(state => state && state.trim() !== '').sort();
+            const uniqueDivisions = [...new Set(stores.map(store => store.division))].filter(division => division && division.trim() !== '').sort();
+            const uniqueRegions = [...new Set(stores.map(store => store.region))].filter(region => region && region.trim() !== '').sort();
+            
+            const statusCounts = stores.reduce((acc, store) => {
+                const status = store.status.toLowerCase();
+                acc[status] = (acc[status] || 0) + 1;
+                return acc;
+            }, {});
+
+            return (
+                <div className="w-full h-screen bg-gray-50 flex flex-col">
+                    {/* Header */}
+                    <div className="bg-white shadow-sm border-b px-4 md:px-6 py-3">
+                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-3">
+                            <h1 className="text-2xl md:text-3xl font-bold text-gray-900">VITL Stores Map</h1>
+                            <button
+                                onClick={fetchFromGoogleSheets}
+                                disabled={loading}
+                                className="px-4 md:px-5 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2 text-base md:text-lg touch-manipulation"
+                            >
+                                {loading ? <Loader className="w-5 h-5 animate-spin" /> : <RefreshCw className="w-5 h-5" />}
+                                <span className="hidden sm:inline">Refresh Data</span>
+                                <span className="sm:hidden">Refresh</span>
+                            </button>
+                        </div>
+
+                        {error && (
+                            <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2">
+                                <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
+                                <span className="text-red-700 text-base">{error}</span>
+                            </div>
+                        )}
+
+                        {lastUpdated && (
+                            <div className="mb-3 text-sm md:text-base text-gray-600">
+                                Last updated: {lastUpdated.toLocaleString()}
+                                {CONFIG.REFRESH_MINUTES > 0 && (
+                                    <span className="hidden sm:inline"> • Auto-refresh every {CONFIG.REFRESH_MINUTES} minutes</span>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Status Summary */}
+                        <div className="mb-3 grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div className="bg-gradient-to-br from-green-50 to-green-100 p-4 rounded-lg border" style={{borderColor: '#2C5134', background: 'linear-gradient(135deg, #E8F5E8 0%, #D4EDD4 100%)'}}>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-4 h-4 rounded-full" style={{backgroundColor: '#2C5134'}}></div>
+                                    <span className="font-medium" style={{color: '#2C5134'}}>Open</span>
+                                </div>
+                                <div className="text-2xl font-bold mt-1" style={{color: '#2C5134'}}>{statusCounts.open || 0}</div>
+                            </div>
+                            <div className="bg-gradient-to-br p-4 rounded-lg border" style={{borderColor: '#CDEA80', background: 'linear-gradient(135deg, #F4F9E8 0%, #E8F0D3 100%)'}}>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-4 h-4 rounded-full" style={{backgroundColor: '#CDEA80'}}></div>
+                                    <span className="font-medium" style={{color: '#7A8B3A'}}>Reserved</span>
+                                </div>
+                                <div className="text-2xl font-bold mt-1" style={{color: '#7A8B3A'}}>{statusCounts.reserved || 0}</div>
+                            </div>
+                            <div className="bg-gradient-to-br from-red-50 to-red-100 p-4 rounded-lg border" style={{borderColor: '#DB864E', background: 'linear-gradient(135deg, #FDF2E9 0%, #F9E5D3 100%)'}}>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-4 h-4 rounded-full" style={{backgroundColor: '#DB864E'}}></div>
+                                    <span className="font-medium" style={{color: '#DB864E'}}>Staffed</span>
+                                </div>
+                                <div className="text-2xl font-bold mt-1" style={{color: '#DB864E'}}>{statusCounts.staffed || 0}</div>
+                            </div>
+                        </div>
+                        
+                        {/* Enhanced Filters */}
+                        <div className="flex flex-col gap-3">
+                            <div className="flex items-center gap-2 flex-1 min-w-0">
+                                <Search className="w-5 h-5 text-gray-500 flex-shrink-0" />
+                                <input
+                                    type="text"
+                                    placeholder="Search stores, cities, retailers, counties..."
+                                    value={searchTerm}
+                                    onChange={(e) => setSearchTerm(e.target.value)}
+                                    className="flex-1 px-3 py-2 border rounded-lg text-base md:text-lg touch-manipulation"
+                                />
+                            </div>
+                            
+                            <div className="flex flex-wrap gap-3 items-center">
+                                <div className="flex items-center gap-2">
+                                    <Filter className="w-5 h-5 text-gray-500 flex-shrink-0" />
+                                    <select
+                                        value={statusFilter}
+                                        onChange={(e) => setStatusFilter(e.target.value)}
+                                        className="px-3 py-2 border rounded-lg text-base touch-manipulation min-w-0"
+                                    >
+                                        <option value="all">All Status</option>
+                                        <option value="open">Open</option>
+                                        <option value="reserved">Reserved</option>
+                                        <option value="staffed">Staffed</option>
+                                    </select>
+                                </div>
+
+                                <select
+                                    value={stateFilter}
+                                    onChange={(e) => setStateFilter(e.target.value)}
+                                    className="px-3 py-2 border rounded-lg text-base touch-manipulation min-w-0"
+                                >
+                                    <option value="all">All States</option>
+                                    {uniqueStates.map(state => (
+                                        <option key={state} value={state}>{state}</option>
+                                    ))}
+                                </select>
+
+                                <select
+                                    value={divisionFilter}
+                                    onChange={(e) => setDivisionFilter(e.target.value)}
+                                    className="px-3 py-2 border rounded-lg text-base touch-manipulation min-w-0"
+                                >
+                                    <option value="all">All Divisions</option>
+                                    {uniqueDivisions.map(division => (
+                                        <option key={division} value={division}>{division}</option>
+                                    ))}
+                                </select>
+
+                                <select
+                                    value={regionFilter}
+                                    onChange={(e) => setRegionFilter(e.target.value)}
+                                    className="px-3 py-2 border rounded-lg text-base touch-manipulation min-w-0"
+                                >
+                                    <option value="all">All Regions</option>
+                                    {uniqueRegions.map(region => (
+                                        <option key={region} value={region}>{region}</option>
+                                    ))}
+                                </select>
+                                
+                                <div className="text-base text-gray-600 whitespace-nowrap font-medium">
+                                    Showing {filteredStores.length} of {stores.length}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="flex-1 flex">
+                        {/* Google Map */}
+                        <div className="flex-1 relative">
+                            <div ref={mapRef} id="map" className="w-full h-full"></div>
+                            
+                            {loading && (
+                                <div className="absolute inset-0 bg-white bg-opacity-90 flex items-center justify-center z-10">
+                                    <div className="flex flex-col items-center gap-4 p-6 bg-white rounded-xl shadow-lg border">
+                                        <Loader className="w-8 h-8 animate-spin text-blue-600" />
+                                        <span className="text-gray-700 font-medium">Loading VITL store data...</span>
+                                        <div className="text-sm text-gray-500">Enhanced with additional store details</div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                        
+                        {/* Enhanced Store Details Panel */}
+                        {selectedStore && (
+                            <div className="w-full sm:w-96 bg-white shadow-lg border-l overflow-y-auto">
+                                <div className="p-4 md:p-5">
+                                    <div className="flex items-start justify-between mb-4">
+                                        <div className="flex-1 min-w-0">
+                                            <h2 className="text-xl font-bold truncate">{selectedStore.storeName}</h2>
+                                            <p className="text-base text-gray-500 mt-1">Store #{selectedStore.storeNumber} • {selectedStore.retailer}</p>
+                                        </div>
+                                        <button
+                                            onClick={() => setSelectedStore(null)}
+                                            className="text-gray-400 hover:text-gray-600 text-2xl ml-3 touch-manipulation flex-shrink-0"
+                                        >
+                                            ×
+                                        </button>
+                                    </div>
+                                    
+                                    <div className="space-y-4">
+                                        {/* Status */}
+                                        <div>
+                                            <div className="text-sm font-medium text-gray-700 mb-1">Status</div>
+                                            <div 
+                                                className="inline-block px-3 py-1 rounded-full text-sm font-medium"
+                                                style={{ 
+                                                    backgroundColor: getStatusBgColor(selectedStore.status),
+                                                    color: getStatusTextColor(selectedStore.status)
+                                                }}
+                                            >
+                                                {selectedStore.status.charAt(0).toUpperCase() + selectedStore.status.slice(1).toLowerCase()}
+                                            </div>
+                                        </div>
+                                        
+                                        {/* Address */}
+                                        <div>
+                                            <div className="text-sm font-medium text-gray-700 mb-1">Address</div>
+                                            <div className="text-sm text-gray-900 leading-relaxed">
+                                                {selectedStore.address}<br/>
+                                                {selectedStore.city}, {selectedStore.state} {selectedStore.zip}
+                                                {selectedStore.county && <><br/>County: {selectedStore.county}</>}
+                                            </div>
+                                        </div>
+
+                                        {/* Launch Dates */}
+                                        {(selectedStore.reservedDate || selectedStore.etaLaunch || selectedStore.officialLaunch) && (
+                                            <div>
+                                                <div className="text-sm font-medium text-gray-700 mb-2">Launch Timeline</div>
+                                                <div className="space-y-1 text-sm text-gray-900">
+                                                    {selectedStore.reservedDate && <div><span className="font-medium">Reserved Date:</span> {selectedStore.reservedDate}</div>}
+                                                    {selectedStore.etaLaunch && <div><span className="font-medium">ETA Launch:</span> {selectedStore.etaLaunch}</div>}
+                                                    {selectedStore.officialLaunch && <div><span className="font-medium">Official Launch:</span> {selectedStore.officialLaunch}</div>}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Organization */}
+                                        <div>
+                                            <div className="text-sm font-medium text-gray-700 mb-2">Organization</div>
+                                            <div className="space-y-1 text-sm text-gray-900">
+                                                {selectedStore.division && <div><span className="font-medium">Division:</span> {selectedStore.division}</div>}
+                                                {selectedStore.region && <div><span className="font-medium">Region:</span> {selectedStore.region}</div>}
+                                                {selectedStore.district && <div><span className="font-medium">District:</span> {selectedStore.district}</div>}
+                                            </div>
+                                        </div>
+
+                                        {/* Financial & Operational */}
+                                        <div>
+                                            <div className="text-sm font-medium text-gray-700 mb-2">Financial & Operational</div>
+                                            <div className="space-y-1 text-sm text-gray-900">
+                                                {selectedStore.salesTarget && (
+                                                    <div><span className="font-medium">Monthly Sales Target:</span> {formatCurrency(selectedStore.salesTarget)}</div>
+                                                )}
+                                                {selectedStore.utility && (
+                                                    <div><span className="font-medium">Utility Company:</span> {selectedStore.utility}</div>
+                                                )}
+                                                {selectedStore.electricityRate && (
+                                                    <div><span className="font-medium">Electricity Rate:</span> {formatElectricityRate(selectedStore.electricityRate)}</div>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* RESERVE BUTTON */}
+                                        {selectedStore.status.toLowerCase() === 'open' && (
+                                            <div className="mt-6 pt-4 border-t">
+                                                <a
+                                                    href={CONFIG.RESERVE_URL}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="w-full text-white px-4 py-3 rounded-lg hover:opacity-90 font-medium text-center block transition-colors"
+                                                    style={{backgroundColor: '#2C5134'}}
+                                                >
+                                                    Reserve Store
+                                                </a>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        ReactDOM.render(<VITLStoresMap />, document.getElementById('root'));
+    </script>
+</body>
+</html>
